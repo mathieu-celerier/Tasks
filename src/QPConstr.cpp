@@ -22,6 +22,7 @@
 // Tasks
 #include "Tasks/Bounds.h"
 #include "utils.h"
+#include <stdexcept>
 
 namespace tasks
 {
@@ -226,8 +227,7 @@ DamperJointLimitsConstr::DamperJointLimitsConstr(const std::vector<rbd::MultiBod
                                                  double lambda)
 : robotIndex_(robotIndex), alphaDBegin_(-1), data_(), lower_(mbs[robotIndex].nrDof()), upper_(mbs[robotIndex].nrDof()),
   alphaDLower_(mbs[robotIndex].nrDof()), alphaDUpper_(mbs[robotIndex].nrDof()), alphaDDLower_(mbs[robotIndex].nrDof()),
-  alphaDDUpper_(mbs[robotIndex].nrDof()), prevAlphaD_(mbs[robotIndex].nrDof()), step_(step), damperOff_(damperOffset),
-  m_(m), lambda_(lambda), isClosedLoop_(m >= 1.0)
+  alphaDDUpper_(mbs[robotIndex].nrDof()), prevAlphaD_(mbs[robotIndex].nrDof()), step_(step), damperOff_(damperOffset)
 {
   assert(std::size_t(robotIndex_) < mbs.size() && robotIndex_ >= 0);
 
@@ -239,7 +239,7 @@ DamperJointLimitsConstr::DamperJointLimitsConstr(const std::vector<rbd::MultiBod
     {
       double dist = (qBound.uQBound[i][0] - qBound.lQBound[i][0]);
       data_.emplace_back(qBound.lQBound[i][0], qBound.uQBound[i][0], aBound.lAlphaBound[i][0], aBound.uAlphaBound[i][0],
-                         dist * interPercent, dist * securityPercent, mb.jointPosInDof(i), i);
+                         dist * interPercent, dist * securityPercent, mb.jointPosInDof(i), i, m, lambda);
     }
   }
 
@@ -275,41 +275,80 @@ void DamperJointLimitsConstr::update(const std::vector<rbd::MultiBody> & /* mbs 
     double ld = mbc.q[d.jointIndex][0] - d.min;
     double ud = d.max - mbc.q[d.jointIndex][0];
     double alpha = mbc.alpha[d.jointIndex][0];
+    bool is_infinit = std::isinf(ld) or std::isinf(ud);
+    double lp, up;
 
-    lower_[d.alphaDBegin] = (d.minVel - alpha) / step_;
-    upper_[d.alphaDBegin] = (d.maxVel - alpha) / step_;
-
-    if(ld < d.iDist)
+    if(d.closeLoopSecondOrder)
     {
-      // damper(dist) < alpha
-      // dist > 0 -> negative < alpha -> joint angle can decrease
-      // dist < 0 -> positive < alpha -> joint angle must increase
-      if(d.state != DampData::Low)
+      double lambda;
+      if(is_infinit)
       {
-        d.damping = std::abs(computeDamping(alpha, ld, d.iDist, d.sDist)) + damperOff_;
-        d.state = DampData::Low;
+        lp = -INFINITY;
+        up = INFINITY;
+        if(d.useLambda) { lambda = d.lambda; }
+        else
+        {
+          throw std::runtime_error("[DamperJointLimitsConstr] You're trying to use the closed loop implementation of "
+                                   "the velocity damper on infinit joints without defining the lamda parameter");
+        }
+      }
+      else
+      {
+        if(d.useLambda) { lambda = d.lambda; }
+        else
+        {
+          lambda = 4 * d.m * d.m * computeDamping(alpha, ld, d.iDist, d.sDist) / (d.iDist - d.sDist);
+        }
+        // Position limit dynamic
+        lp = -lambda * ((lambda * (ld - d.sDist) / (4.0 * d.m * d.m)) + alpha); // Low
+        up = lambda * ((lambda * (ud - d.sDist) / (4.0 * d.m * d.m)) - alpha); // High
       }
 
-      double damper = -computeDamper(ld, d.iDist, d.sDist, d.damping);
-      lower_[d.alphaDBegin] = std::max((damper - alpha) / step_, lower_[d.alphaDBegin]);
-    }
-    else if(ud < d.iDist)
-    {
-      // alpha < damper(dist)
-      // dist > 0 -> alpha < positive -> joint angle can increase
-      // dist < 0 -> alpha < negative -> joint angle must decrease
-      if(d.state != DampData::Upp)
-      {
-        d.damping = std::abs(computeDamping(alpha, ud, d.iDist, d.sDist)) + damperOff_;
-        d.state = DampData::Upp;
-      }
+      // Velocity limit dynamic
+      double lv = lambda * (d.minVel - alpha); // Low
+      double uv = lambda * (d.maxVel - alpha); // High
 
-      double damper = computeDamper(ud, d.iDist, d.sDist, d.damping);
-      upper_[d.alphaDBegin] = std::min((damper - alpha) / step_, upper_[d.alphaDBegin]);
+      // Combination of both position and velocity limits
+      lower_[d.alphaDBegin] = std::max(lp, lv);
+      upper_[d.alphaDBegin] = std::min(up, uv);
     }
     else
     {
-      d.state = DampData::Free;
+      lower_[d.alphaDBegin] = (d.minVel - alpha) / step_;
+      upper_[d.alphaDBegin] = (d.maxVel - alpha) / step_;
+
+      if(ld < d.iDist)
+      {
+        // damper(dist) < alpha
+        // dist > 0 -> negative < alpha -> joint angle can decrease
+        // dist < 0 -> positive < alpha -> joint angle must increase
+        if(d.state != DampData::Low)
+        {
+          d.damping = std::abs(computeDamping(alpha, ld, d.iDist, d.sDist)) + damperOff_;
+          d.state = DampData::Low;
+        }
+
+        double damper = -computeDamper(ld, d.iDist, d.sDist, d.damping);
+        lower_[d.alphaDBegin] = std::max((damper - alpha) / step_, lower_[d.alphaDBegin]);
+      }
+      else if(ud < d.iDist)
+      {
+        // alpha < damper(dist)
+        // dist > 0 -> alpha < positive -> joint angle can increase
+        // dist < 0 -> alpha < negative -> joint angle must decrease
+        if(d.state != DampData::Upp)
+        {
+          d.damping = std::abs(computeDamping(alpha, ud, d.iDist, d.sDist)) + damperOff_;
+          d.state = DampData::Upp;
+        }
+
+        double damper = computeDamper(ud, d.iDist, d.sDist, d.damping);
+        upper_[d.alphaDBegin] = std::min((damper - alpha) / step_, upper_[d.alphaDBegin]);
+      }
+      else
+      {
+        d.state = DampData::Free;
+      }
     }
   }
   lower_ = lower_.cwiseMax(alphaDLower_).cwiseMax(alphaDDLower_ + prevAlphaD_);
@@ -391,9 +430,12 @@ CollisionConstr::CollData::CollData(std::vector<BodyCollData> bcds,
                                     double di,
                                     double ds,
                                     double damp,
-                                    double dampOff)
+                                    double dampOff,
+                                    double closeLoopM,
+                                    double closeLoopLambda)
 : pair(new sch::CD_Pair(body1, body2)), distance(2 * di), normVecDist(Eigen::Vector3d::Zero()), di(di), ds(ds),
-  damping(damp), bodies(std::move(bcds)), dampingType(damping > 0. ? DampingType::Hard : DampingType::Free),
+  damping(damp), m(closeLoopM), lambda(closeLoopLambda), useLambda(closeLoopLambda >= 1.0), bodies(std::move(bcds)),
+  dampingType(damping > 0. ? DampingType::Hard : (m > 1.0 ? DampingType::ClosedLoop : DampingType::Free)),
   dampingOff(dampOff), collId(collId)
 {
 }
@@ -421,7 +463,9 @@ void CollisionConstr::addCollision(const std::vector<rbd::MultiBody> & mbs,
                                    double damping,
                                    double dampingOff,
                                    const Eigen::VectorXd & r1Selector,
-                                   const Eigen::VectorXd & r2Selector)
+                                   const Eigen::VectorXd & r2Selector,
+                                   double closeLoopM,
+                                   double closeLoopLambda)
 {
   const rbd::MultiBody mb1 = mbs[static_cast<size_t>(r1Index)];
   const rbd::MultiBody mb2 = mbs[static_cast<size_t>(r2Index)];
@@ -436,7 +480,8 @@ void CollisionConstr::addCollision(const std::vector<rbd::MultiBody> & mbs,
     assert(r2Selector.size() == 0 || r2Selector.size() == mb2.nrDof());
     bodies.emplace_back(mb2, r2Index, r2BodyName, body2, X_op2_o2, r1Index == r2Index ? r1Selector : r2Selector);
   }
-  dataVec_.emplace_back(std::move(bodies), collId, body1, body2, di, ds, damping, dampingOff);
+  dataVec_.emplace_back(std::move(bodies), collId, body1, body2, di, ds, damping, dampingOff, closeLoopM,
+                        closeLoopLambda);
 }
 
 bool CollisionConstr::rmCollision(int collId)
@@ -524,16 +569,16 @@ void CollisionConstr::update(const std::vector<rbd::MultiBody> & mbs,
       nearestPoint = d.p2;
     }
 
-    if(d.distance < d.di)
+    if(d.dampingType == CollData::DampingType::ClosedLoop)
     {
-      // automatic damping computation if needed
-      if(d.dampingType == CollData::DampingType::Free)
+      double lambda;
+      if(d.useLambda) { lambda = d.lambda; }
+      else
       {
-        d.dampingType = CollData::DampingType::Soft;
-        d.damping = computeDamping(mbs, mbcs, d, normVecDist, d.distance);
+        lambda = 4 * d.m * d.m * computeDamping(mbs, mbcs, d, normVecDist, d.distance) / (d.di - d.ds);
       }
 
-      double dampers = d.damping * ((d.distance - d.ds) / (d.di - d.ds));
+      double dampers = -((lambda * lambda) / (4 * d.m * d.m)) * (d.distance - d.ds);
 
       Vector3d nf = normVecDist;
       Vector3d onf = d.normVecDist;
@@ -553,14 +598,13 @@ void CollisionConstr::update(const std::vector<rbd::MultiBody> & mbs,
         Eigen::Vector3d pSpeed = bcd.jac.velocity(mb, mbc).linear();
         Eigen::Vector3d pNormalAcc = bcd.jac.normalAcceleration(mb, mbc, data.normalAccB(bcd.rIndex)).linear();
 
-        distJac_.block(0, 0, 1, bcd.jac.dof()).noalias() =
-            (nf * step_ * sign).transpose() * jac.block(3, 0, 3, bcd.jac.dof());
+        distJac_.block(0, 0, 1, bcd.jac.dof()).noalias() = (nf * sign).transpose() * jac.block(3, 0, 3, bcd.jac.dof());
 
         bcd.jac.fullJacobian(mb, distJac_.block(0, 0, 1, bcd.jac.dof()), fullJac_);
 
-        double jqdn = pSpeed.dot(nf);
-        double jqdnd = pSpeed.dot(dnf * step_);
-        double jdqdn = pNormalAcc.dot(nf * step_);
+        double jqdn = pSpeed.dot(nf * lambda);
+        double jqdnd = pSpeed.dot(dnf);
+        double jdqdn = pNormalAcc.dot(nf);
 
         if(bcd.selector.size() == 0)
         {
@@ -582,7 +626,66 @@ void CollisionConstr::update(const std::vector<rbd::MultiBody> & mbs,
     }
     else
     {
-      if(d.dampingType == CollData::DampingType::Soft) { d.dampingType = CollData::DampingType::Free; }
+      if(d.distance < d.di)
+      {
+        // automatic damping computation if needed
+        if(d.dampingType == CollData::DampingType::Free)
+        {
+          d.dampingType = CollData::DampingType::Soft;
+          d.damping = computeDamping(mbs, mbcs, d, normVecDist, d.distance);
+        }
+
+        double dampers = d.damping * ((d.distance - d.ds) / (d.di - d.ds));
+
+        Vector3d nf = normVecDist;
+        Vector3d onf = d.normVecDist;
+        Vector3d dnf = (nf - onf) / step_;
+
+        double sign = 1.;
+        bInEq_(nrActivated_) = dampers;
+        AInEq_.block(nrActivated_, 0, 1, totalAlphaD_).setZero();
+        for(std::size_t i = 0; i < d.bodies.size(); ++i)
+        {
+          BodyCollData & bcd = d.bodies[i];
+          const rbd::MultiBody & mb = mbs[static_cast<size_t>(bcd.rIndex)];
+          const rbd::MultiBodyConfig & mbc = mbcs[static_cast<size_t>(bcd.rIndex)];
+
+          // Compute body1
+          const MatrixXd & jac = bcd.jac.jacobian(mb, mbc);
+          Eigen::Vector3d pSpeed = bcd.jac.velocity(mb, mbc).linear();
+          Eigen::Vector3d pNormalAcc = bcd.jac.normalAcceleration(mb, mbc, data.normalAccB(bcd.rIndex)).linear();
+
+          distJac_.block(0, 0, 1, bcd.jac.dof()).noalias() =
+              (nf * step_ * sign).transpose() * jac.block(3, 0, 3, bcd.jac.dof());
+
+          bcd.jac.fullJacobian(mb, distJac_.block(0, 0, 1, bcd.jac.dof()), fullJac_);
+
+          double jqdn = pSpeed.dot(nf);
+          double jqdnd = pSpeed.dot(dnf * step_);
+          double jdqdn = pNormalAcc.dot(nf * step_);
+
+          if(bcd.selector.size() == 0)
+          {
+            AInEq_.block(nrActivated_, data.alphaDBegin(bcd.rIndex), 1, mb.nrDof()).noalias() -=
+                fullJac_.block(0, 0, 1, mb.nrDof());
+          }
+          else
+          {
+            AInEq_.block(nrActivated_, data.alphaDBegin(bcd.rIndex), 1, mb.nrDof()).noalias() -=
+                fullJac_.block(0, 0, 1, mb.nrDof()) * bcd.selector.asDiagonal();
+          }
+          bInEq_(nrActivated_) += sign * (jqdn + jqdnd + jdqdn);
+          // little hack
+          // the max iteration number is two, so at the second iteration
+          // sign will be -1
+          sign = -1.;
+        }
+        ++nrActivated_;
+      }
+      else
+      {
+        if(d.dampingType == CollData::DampingType::Soft) { d.dampingType = CollData::DampingType::Free; }
+      }
     }
 
     d.normVecDist = normVecDist;

@@ -257,9 +257,19 @@ private:
       Free
     };
 
-    DampData(double mi, double ma, double miV, double maV, double idi, double sdi, int aDB, int i)
+    DampData(double mi,
+             double ma,
+             double miV,
+             double maV,
+             double idi,
+             double sdi,
+             int aDB,
+             int i,
+             double closeLoopM,
+             double closeLoopLambda)
     : min(mi), max(ma), minVel(miV), maxVel(maV), iDist(idi), sDist(sdi), jointIndex(i), alphaDBegin(aDB), damping(0.),
-      state(Free)
+      m(closeLoopM), lambda(closeLoopLambda), closeLoopSecondOrder(closeLoopM >= 1.0),
+      useLambda(closeLoopLambda >= 1.0), state(Free)
     {
     }
 
@@ -269,6 +279,8 @@ private:
     int jointIndex;
     int alphaDBegin;
     double damping;
+    double m, lambda;
+    bool closeLoopSecondOrder, useLambda;
     State state;
   };
 
@@ -277,9 +289,6 @@ private:
   std::vector<DampData> data_;
 
   // Closed loop implementation parameter
-  bool isClosedLoop_;
-  double m_, lambda_;
-
   Eigen::VectorXd lower_, upper_;
   Eigen::VectorXd alphaDLower_, alphaDUpper_;
   Eigen::VectorXd alphaDDLower_, alphaDDUpper_;
@@ -354,7 +363,9 @@ public:
                     double damping,
                     double dampingOff = 0.,
                     const Eigen::VectorXd & r1Selector = Eigen::VectorXd::Zero(0),
-                    const Eigen::VectorXd & r2Selector = Eigen::VectorXd::Zero(0));
+                    const Eigen::VectorXd & r2Selector = Eigen::VectorXd::Zero(0),
+                    double closeLoopM = 0.,
+                    double closeLoopLambda = 0.);
 
   /**
    * Remove a collision avoidance constraint.
@@ -414,7 +425,8 @@ private:
     {
       Hard,
       Soft,
-      Free
+      Free,
+      ClosedLoop
     };
     CollData(std::vector<BodyCollData> bcds,
              int collId,
@@ -423,7 +435,9 @@ private:
              double di,
              double ds,
              double damping,
-             double dampingOff);
+             double dampingOff,
+             double closeLoopM,
+             double closeLoopLambda);
     CollData(CollData &&) = default;
     CollData(const CollData &) = delete;
     CollData & operator=(const CollData &) = delete;
@@ -436,6 +450,9 @@ private:
     Eigen::Vector3d normVecDist;
     double di, ds;
     double damping;
+    double m, lambda;
+    bool useLambda;
+
     std::vector<BodyCollData> bodies;
 
     DampingType dampingType;
