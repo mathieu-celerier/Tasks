@@ -168,8 +168,21 @@ DamperJointLimitsConstr::DamperJointLimitsConstr(const std::vector<rbd::MultiBod
                                                  double interPercent,
                                                  double securityPercent,
                                                  double damperOffset,
-                                                 double step)
-: DamperJointLimitsConstr(mbs, robotIndex, qBound, aBound, {}, {}, interPercent, securityPercent, damperOffset, step)
+                                                 double step,
+                                                 double m,
+                                                 double lambda)
+: DamperJointLimitsConstr(mbs,
+                          robotIndex,
+                          qBound,
+                          aBound,
+                          {},
+                          {},
+                          interPercent,
+                          securityPercent,
+                          damperOffset,
+                          step,
+                          m,
+                          lambda)
 {
 }
 
@@ -181,7 +194,9 @@ DamperJointLimitsConstr::DamperJointLimitsConstr(const std::vector<rbd::MultiBod
                                                  double interPercent,
                                                  double securityPercent,
                                                  double damperOffset,
-                                                 double step)
+                                                 double step,
+                                                 double m,
+                                                 double lambda)
 : DamperJointLimitsConstr(mbs,
                           robotIndex,
                           qBound,
@@ -191,7 +206,9 @@ DamperJointLimitsConstr::DamperJointLimitsConstr(const std::vector<rbd::MultiBod
                           interPercent,
                           securityPercent,
                           damperOffset,
-                          step)
+                          step,
+                          m,
+                          lambda)
 {
 }
 
@@ -204,10 +221,13 @@ DamperJointLimitsConstr::DamperJointLimitsConstr(const std::vector<rbd::MultiBod
                                                  double interPercent,
                                                  double securityPercent,
                                                  double damperOffset,
-                                                 double step)
+                                                 double step,
+                                                 double m,
+                                                 double lambda)
 : robotIndex_(robotIndex), alphaDBegin_(-1), data_(), lower_(mbs[robotIndex].nrDof()), upper_(mbs[robotIndex].nrDof()),
   alphaDLower_(mbs[robotIndex].nrDof()), alphaDUpper_(mbs[robotIndex].nrDof()), alphaDDLower_(mbs[robotIndex].nrDof()),
-  alphaDDUpper_(mbs[robotIndex].nrDof()), prevAlphaD_(mbs[robotIndex].nrDof()), step_(step), damperOff_(damperOffset)
+  alphaDDUpper_(mbs[robotIndex].nrDof()), prevAlphaD_(mbs[robotIndex].nrDof()), step_(step), damperOff_(damperOffset),
+  m_(m), lambda_(lambda), isClosedLoop_(m >= 1.0)
 {
   assert(std::size_t(robotIndex_) < mbs.size() && robotIndex_ >= 0);
 

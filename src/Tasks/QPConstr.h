@@ -160,6 +160,8 @@ public:
    * @param securityPercent \f$ securityPercent (\overline{q} - \underline{q}) \f$
    * @param damperOffset \f$ \xi_{\text{off}} \f$
    * @param step Time step in second.
+   * @param m Damping ratio for 2nd order system >= 1.0 (used only for closed loop implementation).
+   * @param lambda Closed loop gain.
    */
   DamperJointLimitsConstr(const std::vector<rbd::MultiBody> & mbs,
                           int robotIndex,
@@ -168,7 +170,10 @@ public:
                           double interPercent,
                           double securityPercent,
                           double damperOffset,
-                          double step);
+                          double step,
+                          double m = 0.0,
+                          double lambda = 0.0);
+
   /**
    * @param mbs Multi-robot system.
    * @param robotIndex Constrained robot Index in mbs.
@@ -179,7 +184,10 @@ public:
    * @param securityPercent \f$ securityPercent (\overline{q} - \underline{q}) \f$
    * @param damperOffset \f$ \xi_{\text{off}} \f$
    * @param step Time step in second.
+   * @param m Damping ratio for 2nd order system >= 1.0 (used only for closed loop implementation).
+   * @param lambda Closed loop gain.
    */
+
   DamperJointLimitsConstr(const std::vector<rbd::MultiBody> & mbs,
                           int robotIndex,
                           const QBound & qBound,
@@ -188,7 +196,9 @@ public:
                           double interPercent,
                           double securityPercent,
                           double damperOffset,
-                          double step);
+                          double step,
+                          double m = 0.0,
+                          double lambda = 0.0);
 
   /**
    * @param mbs Multi-robot system.
@@ -201,6 +211,8 @@ public:
    * @param securityPercent \f$ securityPercent (\overline{q} - \underline{q}) \f$
    * @param damperOffset \f$ \xi_{\text{off}} \f$
    * @param step Time step in second.
+   * @param m Damping ratio for 2nd order system >= 1.0 (used only for closed loop implementation).
+   * @param lambda Closed loop gain.
    */
   DamperJointLimitsConstr(const std::vector<rbd::MultiBody> & mbs,
                           int robotIndex,
@@ -211,7 +223,9 @@ public:
                           double interPercent,
                           double securityPercent,
                           double damperOffset,
-                          double step);
+                          double step,
+                          double m = 0.0,
+                          double lambda = 0.0);
 
   // Constraint
   virtual void updateNrVars(const std::vector<rbd::MultiBody> & mbs, const SolverData & data) override;
@@ -261,6 +275,10 @@ private:
 private:
   int robotIndex_, alphaDBegin_;
   std::vector<DampData> data_;
+
+  // Closed loop implementation parameter
+  bool isClosedLoop_;
+  double m_, lambda_;
 
   Eigen::VectorXd lower_, upper_;
   Eigen::VectorXd alphaDLower_, alphaDUpper_;
